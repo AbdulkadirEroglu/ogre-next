@@ -42,6 +42,9 @@
 #ifdef OGRE_GLSUPPORT_USE_EGL_HEADLESS
 #    include "windowing/EGL/PBuffer/OgreEglPBufferSupport.h"
 #endif
+#ifdef OGRE_GLSUPPORT_USE_EGL_WAYLAND
+#    include "windowing/EGL/Wayland/OgreWaylandEglSupport.h"
+#endif
 
 namespace Ogre
 {
@@ -49,31 +52,16 @@ namespace Ogre
     GlSwitchableSupport::GlSwitchableSupport() : mSelectedInterface( 0u ), mInterfaceSelected( false )
     {
 #ifdef OGRE_GLSUPPORT_USE_GLX
-        try
-        {
-            mAvailableInterfaces.push_back( Interface( WindowNative, new GLXGLSupport() ) );
-        }
-        catch( Exception &e )
-        {
-            LogManager::getSingleton().logMessage(
-                "GLX raised an exception. Won't be available. Is X11 running?" );
-            LogManager::getSingleton().logMessage( e.getFullDescription() );
-        }
+        mAvailableInterfaces.push_back( Interface( WindowNative, 0 ) );
 #endif
 #ifdef OGRE_GLSUPPORT_USE_WGL
-        mAvailableInterfaces.push_back( Interface( WindowNative, new Win32GLSupport() ) );
+        mAvailableInterfaces.push_back( Interface( WindowNative, 0 ) );
 #endif
 #ifdef OGRE_GLSUPPORT_USE_EGL_HEADLESS
-        try
-        {
-            mAvailableInterfaces.push_back( Interface( HeadlessEgl, new EglPBufferSupport() ) );
-        }
-        catch( Exception &e )
-        {
-            LogManager::getSingleton().logMessage(
-                "EGL Headless raised an exception. Won't be available. Are drivers too old?" );
-            LogManager::getSingleton().logMessage( e.getFullDescription() );
-        }
+        mAvailableInterfaces.push_back( Interface( HeadlessEgl, 0 ) );
+#endif
+#ifdef OGRE_GLSUPPORT_USE_EGL_WAYLAND
+        mAvailableInterfaces.push_back( Interface( WaylandEgl, 0 ) );
 #endif
 
         if( mAvailableInterfaces.empty() )
@@ -114,9 +102,64 @@ namespace Ogre
 #endif
         case HeadlessEgl:
             return "Headless EGL / PBuffer";
+        case WaylandEgl:
+            return "Wayland EGL Window";
         }
 
         return "ERROR";
+    }
+    //-------------------------------------------------------------------------
+    GL3PlusSupport *GlSwitchableSupport::ensureSupportCreated( uint8 idx )
+    {
+        Interface &selectedInterface = mAvailableInterfaces[idx];
+        if( selectedInterface.support )
+            return selectedInterface.support;
+
+        try
+        {
+            switch( selectedInterface.type )
+            {
+            case WindowNative:
+#if defined( OGRE_GLSUPPORT_USE_GLX )
+                selectedInterface.support = new GLXGLSupport();
+#elif defined( OGRE_GLSUPPORT_USE_WGL )
+                selectedInterface.support = new Win32GLSupport();
+#else
+                OGRE_EXCEPT( Exception::ERR_RENDERINGAPI_ERROR,
+                             "Native window OpenGL support was requested but is unavailable.",
+                             "GlSwitchableSupport::ensureSupportCreated" );
+#endif
+                break;
+            case HeadlessEgl:
+#ifdef OGRE_GLSUPPORT_USE_EGL_HEADLESS
+                selectedInterface.support = new EglPBufferSupport();
+#else
+                OGRE_EXCEPT( Exception::ERR_RENDERINGAPI_ERROR,
+                             "Headless EGL support was requested but is unavailable.",
+                             "GlSwitchableSupport::ensureSupportCreated" );
+#endif
+                break;
+            case WaylandEgl:
+#ifdef OGRE_GLSUPPORT_USE_EGL_WAYLAND
+                selectedInterface.support = new WaylandEglSupport();
+#else
+                OGRE_EXCEPT( Exception::ERR_RENDERINGAPI_ERROR,
+                             "Wayland EGL support was requested but is unavailable.",
+                             "GlSwitchableSupport::ensureSupportCreated" );
+#endif
+                break;
+            }
+        }
+        catch( Exception &e )
+        {
+            const char *interfaceName = getInterfaceName( selectedInterface.type );
+            LogManager::getSingleton().logMessage( String( interfaceName ) +
+                                                   " raised an exception during creation." );
+            LogManager::getSingleton().logMessage( e.getFullDescription() );
+            throw;
+        }
+
+        return selectedInterface.support;
     }
     //-------------------------------------------------------------------------
     void GlSwitchableSupport::addConfig( void )
@@ -139,11 +182,11 @@ namespace Ogre
         optInterfaces.currentValue = optInterfaces.possibleValues[mSelectedInterface];
         optInterfaces.immutable = false;
 
-        mAvailableInterfaces[mSelectedInterface].support->addConfig();
+        ensureSupportCreated( mSelectedInterface )->addConfig();
 
         mOptions[optInterfaces.name] = optInterfaces;
-        mOptions.insert( mAvailableInterfaces[mSelectedInterface].support->getConfigOptions().begin(),
-                         mAvailableInterfaces[mSelectedInterface].support->getConfigOptions().end() );
+        mOptions.insert( ensureSupportCreated( mSelectedInterface )->getConfigOptions().begin(),
+                         ensureSupportCreated( mSelectedInterface )->getConfigOptions().end() );
 
         refreshConfig();
     }
@@ -163,13 +206,14 @@ namespace Ogre
                 mOptions.erase( mOptions.begin(), optInterfaces );
                 mOptions.erase( itNext, mOptions.end() );
 
-                stop();
+                if( mAvailableInterfaces[mSelectedInterface].support )
+                    mAvailableInterfaces[mSelectedInterface].support->stop();
                 mSelectedInterface = newInterfaceIdx;
                 start();
-                mAvailableInterfaces[mSelectedInterface].support->addConfig();
+                ensureSupportCreated( mSelectedInterface )->addConfig();
                 mOptions.insert(
-                    mAvailableInterfaces[mSelectedInterface].support->getConfigOptions().begin(),
-                    mAvailableInterfaces[mSelectedInterface].support->getConfigOptions().end() );
+                    ensureSupportCreated( mSelectedInterface )->getConfigOptions().begin(),
+                    ensureSupportCreated( mSelectedInterface )->getConfigOptions().end() );
             }
         }
     }
@@ -185,11 +229,11 @@ namespace Ogre
         }
         else
         {
-            mAvailableInterfaces[mSelectedInterface].support->setConfigOption( name, value );
+            ensureSupportCreated( mSelectedInterface )->setConfigOption( name, value );
 
             // Update our copy of mOptions
             const ConfigOptionMap &interfOpts =
-                mAvailableInterfaces[mSelectedInterface].support->getConfigOptions();
+                ensureSupportCreated( mSelectedInterface )->getConfigOptions();
             ConfigOptionMap::const_iterator itOpt = interfOpts.find( name );
             if( interfOpts.find( name ) != interfOpts.end() )
                 mOptions[name] = itOpt->second;
@@ -198,43 +242,49 @@ namespace Ogre
     //-------------------------------------------------------------------------
     String GlSwitchableSupport::validateConfig( void )
     {
-        // TODO
-        return BLANKSTRING;
+        return ensureSupportCreated( mSelectedInterface )->validateConfig();
     }
     //-------------------------------------------------------------------------
     const char *GlSwitchableSupport::getPriorityConfigOption( size_t idx ) const
     {
         if( idx > 0u )
-            return mAvailableInterfaces[mSelectedInterface].support->getPriorityConfigOption( idx );
+            return const_cast<GlSwitchableSupport *>( this )->ensureSupportCreated(
+                mSelectedInterface )->getPriorityConfigOption( idx );
         return "Interface";
     }
     //-------------------------------------------------------------------------
     size_t GlSwitchableSupport::getNumPriorityConfigOptions( void ) const
     {
-        return 1u + mAvailableInterfaces[mSelectedInterface].support->getNumPriorityConfigOptions();
+        return 1u + const_cast<GlSwitchableSupport *>( this )->ensureSupportCreated(
+                        mSelectedInterface )->getNumPriorityConfigOptions();
     }
     //-------------------------------------------------------------------------
     Window *GlSwitchableSupport::createWindow( bool autoCreateWindow, GL3PlusRenderSystem *renderSystem,
                                                const String &windowTitle )
     {
-        return mAvailableInterfaces[mSelectedInterface].support->createWindow(
+        return ensureSupportCreated( mSelectedInterface )->createWindow(
             autoCreateWindow, renderSystem, windowTitle );
     }
     //-------------------------------------------------------------------------
     Window *GlSwitchableSupport::newWindow( const String &name, uint32 width, uint32 height,
                                             bool fullscreen, const NameValuePairList *miscParams )
     {
-        return mAvailableInterfaces[mSelectedInterface].support->newWindow( name, width, height,
-                                                                            fullscreen, miscParams );
+        return ensureSupportCreated( mSelectedInterface )->newWindow( name, width, height,
+                                                                      fullscreen, miscParams );
     }
     //-------------------------------------------------------------------------
-    void GlSwitchableSupport::start() { mAvailableInterfaces[mSelectedInterface].support->start(); }
+    void GlSwitchableSupport::start() { ensureSupportCreated( mSelectedInterface )->start(); }
     //-------------------------------------------------------------------------
-    void GlSwitchableSupport::stop() { mAvailableInterfaces[mSelectedInterface].support->stop(); }
+    void GlSwitchableSupport::stop()
+    {
+        if( mAvailableInterfaces[mSelectedInterface].support )
+            mAvailableInterfaces[mSelectedInterface].support->stop();
+    }
     //-------------------------------------------------------------------------
     void *GlSwitchableSupport::getProcAddress( const char *procname ) const
     {
-        return mAvailableInterfaces[mSelectedInterface].support->getProcAddress( procname );
+        return const_cast<GlSwitchableSupport *>( this )->ensureSupportCreated(
+            mSelectedInterface )->getProcAddress( procname );
     }
     //-------------------------------------------------------------------------
     uint8 GlSwitchableSupport::findSelectedInterfaceIdx( void ) const

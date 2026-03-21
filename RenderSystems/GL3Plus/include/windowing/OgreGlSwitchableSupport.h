@@ -37,6 +37,7 @@ namespace Ogre
         enum InterfaceType
         {
             WindowNative,  // GLX / WGL / Cocoa
+            WaylandEgl,    // EGL Wayland native window
             HeadlessEgl    // EGL headless
         };
 
@@ -57,6 +58,7 @@ namespace Ogre
         FastArray<Interface> mAvailableInterfaces;
 
         static const char *getInterfaceName( InterfaceType interface );
+        GL3PlusSupport *ensureSupportCreated( uint8 idx );
 
         /**
          * Refresh config options to reflect dependencies

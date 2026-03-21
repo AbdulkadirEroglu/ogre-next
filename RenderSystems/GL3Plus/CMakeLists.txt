@@ -15,6 +15,8 @@ file(GLOB SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp" "${CMAKE_CURRENT_
 file(GLOB GLSL_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/GLSL/*.h")
 file(GLOB GLSL_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/GLSL/*.cpp")
 
+include(${OGRE_SOURCE_DIR}/CMake/Utils/OgreWaylandProtocol.cmake)
+
 # Add system specific settings
 if( OGRE_GLSUPPORT_USE_WGL )
 	file(GLOB PLATFORM_HEADERS "include/windowing/win32/*.h" "src/windowing/win32/*.h")
@@ -68,6 +70,47 @@ if( OGRE_GLSUPPORT_USE_EGL_HEADLESS )
 
 	list( APPEND PLATFORM_LIBS ${EGL_LIBRARIES} )
 endif()
+
+if( OGRE_GLSUPPORT_USE_EGL_WAYLAND )
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(WAYLAND_CLIENT REQUIRED wayland-client)
+	pkg_check_modules(WAYLAND_EGL REQUIRED wayland-egl)
+	pkg_check_modules(WAYLAND_PROTOCOLS REQUIRED wayland-protocols)
+	find_program(WAYLAND_SCANNER_EXECUTABLE NAMES wayland-scanner REQUIRED)
+	pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
+
+	if( NOT WAYLAND_PROTOCOLS_DIR )
+		message(FATAL_ERROR "wayland-protocols pkgdatadir was not found")
+	endif()
+
+	set(XDG_SHELL_PROTOCOL_XML "${WAYLAND_PROTOCOLS_DIR}/stable/xdg-shell/xdg-shell.xml")
+	if( NOT EXISTS "${XDG_SHELL_PROTOCOL_XML}" )
+		message(FATAL_ERROR "xdg-shell protocol XML was not found at ${XDG_SHELL_PROTOCOL_XML}")
+	endif()
+
+	set(WAYLAND_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/wayland")
+	ogre_generate_wayland_protocol("${XDG_SHELL_PROTOCOL_XML}" "${WAYLAND_GENERATED_DIR}"
+		XDG_SHELL_CLIENT_PROTOCOL_HEADER XDG_SHELL_PROTOCOL_CODE)
+
+	file(GLOB PLATFORM_HEADERS_TMP "include/windowing/EGL/Wayland/*.h")
+	file(GLOB PLATFORM_SOURCES_TMP "src/windowing/EGL/Wayland/*.cpp")
+	list( APPEND PLATFORM_HEADERS_TMP "${XDG_SHELL_CLIENT_PROTOCOL_HEADER}" )
+	list( APPEND PLATFORM_SOURCES_TMP "${XDG_SHELL_PROTOCOL_CODE}" )
+	list( APPEND PLATFORM_HEADERS ${PLATFORM_HEADERS_TMP} )
+	list( APPEND PLATFORM_SOURCES ${PLATFORM_SOURCES_TMP} )
+	set( PLATFORM_HEADERS_EGL_WAYLAND ${PLATFORM_HEADERS_TMP} )
+	include_directories( include/windowing/EGL )
+	include_directories( ${WAYLAND_CLIENT_INCLUDE_DIRS} ${WAYLAND_EGL_INCLUDE_DIRS} "${WAYLAND_GENERATED_DIR}" )
+
+	if( OGRE_GLSUPPORT_NUM_INTERFACES EQUAL 1 )
+		include_directories( src/windowing/EGL )
+	endif()
+
+	list( APPEND PLATFORM_LIBS ${EGL_LIBRARIES} ${WAYLAND_CLIENT_LIBRARIES} ${WAYLAND_EGL_LIBRARIES} )
+endif()
+
+option(OGRE_BUILD_WAYLAND_EGL_SMOKE_TEST "Build the Wayland EGL external-surface smoke test" ON)
+option(OGRE_BUILD_GLX_SMOKE_TEST "Build the GLX/X11 smoke test" ON)
 
 if( OGRE_GLSUPPORT_NUM_INTERFACES GREATER 1 )
 	list( APPEND SOURCE_FILES
@@ -123,6 +166,48 @@ endif ()
 ogre_config_framework(RenderSystem_GL3Plus)
 
 ogre_config_plugin(RenderSystem_GL3Plus)
+
+if( OGRE_GLSUPPORT_USE_EGL_WAYLAND AND OGRE_BUILD_WAYLAND_EGL_SMOKE_TEST )
+	set( WAYLAND_EGL_SMOKE_TEST_SOURCE
+		"${CMAKE_CURRENT_SOURCE_DIR}/test/WaylandEglSmokeTest.cpp" )
+	find_library(OPENGL_LEGACY_GL_LIBRARY NAMES GL)
+
+	ogre_add_executable(Test_GL3PlusWaylandEglSmoke
+		${WAYLAND_EGL_SMOKE_TEST_SOURCE}
+		${XDG_SHELL_PROTOCOL_CODE})
+	target_include_directories(Test_GL3PlusWaylandEglSmoke PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/include
+		${WAYLAND_CLIENT_INCLUDE_DIRS}
+		${WAYLAND_EGL_INCLUDE_DIRS}
+		"${WAYLAND_GENERATED_DIR}")
+	target_link_libraries(Test_GL3PlusWaylandEglSmoke
+		${OGRE_NEXT}Main
+		RenderSystem_GL3Plus
+		${OPENGL_LEGACY_GL_LIBRARY}
+		${PLATFORM_LIBS}
+		${WAYLAND_CLIENT_LIBRARIES}
+		${WAYLAND_EGL_LIBRARIES})
+	ogre_config_tool(Test_GL3PlusWaylandEglSmoke)
+endif()
+
+if( OGRE_GLSUPPORT_USE_GLX AND OGRE_BUILD_GLX_SMOKE_TEST )
+	set( GLX_SMOKE_TEST_SOURCE
+		"${CMAKE_CURRENT_SOURCE_DIR}/test/GlxSmokeTest.cpp" )
+	find_library(OPENGL_LEGACY_GL_LIBRARY NAMES GL)
+
+	ogre_add_executable(Test_GL3PlusGlxSmoke
+		${GLX_SMOKE_TEST_SOURCE})
+	target_include_directories(Test_GL3PlusGlxSmoke PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/include)
+	target_link_libraries(Test_GL3PlusGlxSmoke
+		${OGRE_NEXT}Main
+		RenderSystem_GL3Plus
+		${OPENGL_LEGACY_GL_LIBRARY}
+		${OPENGL_LIBRARIES}
+		${PLATFORM_LIBS})
+	ogre_config_tool(Test_GL3PlusGlxSmoke)
+endif()
+
 install(FILES ${HEADER_FILES} DESTINATION include/${OGRE_NEXT_PREFIX}/RenderSystems/GL3Plus)
 if( OGRE_GLSUPPORT_USE_GLX )
 	install(FILES ${PLATFORM_HEADERS_GLX} DESTINATION include/${OGRE_NEXT_PREFIX}/RenderSystems/GL3Plus/GLX)
@@ -132,6 +217,9 @@ if( OGRE_GLSUPPORT_USE_COCOA )
 endif()
 if( OGRE_GLSUPPORT_USE_EGL_HEADLESS )
   install(FILES ${PLATFORM_HEADERS_EGL} DESTINATION include/${OGRE_NEXT_PREFIX}/RenderSystems/GL3Plus/EGL)
+endif()
+if( OGRE_GLSUPPORT_USE_EGL_WAYLAND )
+  install(FILES ${PLATFORM_HEADERS_EGL_WAYLAND} DESTINATION include/${OGRE_NEXT_PREFIX}/RenderSystems/GL3Plus/EGL/Wayland)
 endif()
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION include/${OGRE_NEXT_PREFIX}/RenderSystems/GL3Plus)
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/GLSL/ DESTINATION include/${OGRE_NEXT_PREFIX}/RenderSystems/GL3Plus)
