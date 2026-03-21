@@ -33,12 +33,14 @@
 #include "OgreDepthBuffer.h"
 #include "OgreException.h"
 #include "OgreGL3PlusTextureGpuManager.h"
+#include "OgreLogManager.h"
 #include "OgrePixelFormatGpuUtils.h"
 #include "OgreStringConverter.h"
 #include "OgreTextureGpuListener.h"
 #include "OgreTextureGpuManager.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <poll.h>
 #include <vector>
@@ -96,7 +98,7 @@ namespace Ogre
         mFullscreen( fullscreenMode ),
         mEglSupport( glsupport )
     {
-        OGRE_UNUSED( miscParams );
+        create( miscParams );
     }
 
     // ---------------------------------------------------------------------
@@ -217,21 +219,45 @@ namespace Ogre
             }
         }
 
-        if( hasExternalDisplay != hasExternalSurface )
+        if( !hasExternalDisplay && hasExternalSurface )
         {
             OGRE_EXCEPT( Exception::ERR_INVALIDPARAMS,
-                         "Both externalWaylandDisplay and externalWaylandSurface must be provided together.", "WaylandEglWindow::create" );
+                         "externalWaylandSurface requires externalWaylandDisplay.",
+                         "WaylandEglWindow::create" );
         }
 
         if( hasExternalDisplay && hasExternalSurface )
         {
+            std::fprintf( stderr,
+                          "[OgreWaylandEglWindow] imported external display=%p surface=%p\n",
+                          static_cast<void *>( mWlDisplay ),
+                          static_cast<void *>( mWlSurface ) );
+            LogManager::getSingleton().logMessage(
+                "WaylandEglWindow using imported external Wayland display/surface" );
             mOwnsWlDisplay = false;
             mOwnsWlSurface = false;
             mOwnsXdgShellObjects = false;
         }
         else
         {
-            initWaylandConnection();
+            if( hasExternalDisplay )
+            {
+                std::fprintf( stderr,
+                              "[OgreWaylandEglWindow] using imported external display=%p "
+                              "with self-owned surface\n",
+                              static_cast<void *>( mWlDisplay ) );
+                LogManager::getSingleton().logMessage(
+                    "WaylandEglWindow using imported Wayland display with self-owned surface" );
+                mOwnsWlDisplay = false;
+            }
+            else
+            {
+                std::fprintf( stderr,
+                              "[OgreWaylandEglWindow] creating self-owned toplevel surface\n" );
+                LogManager::getSingleton().logMessage(
+                    "WaylandEglWindow creating self-owned Wayland surface/toplevel" );
+                initWaylandConnection();
+            }
             bindRegistryGlobals();
             createWaylandSurface();
             createXdgShellObjects();
@@ -244,6 +270,17 @@ namespace Ogre
         createEglSurface();
         mEglContext = mEglSupport->createContext();
         mEglSupport->makeCurrent( mEglSurface, mEglContext );
+
+        EGLint contextMajor = 0;
+        EGLint contextMinor = 0;
+        eglQueryContext( mEglDisplay, mEglContext, EGL_CONTEXT_MAJOR_VERSION, &contextMajor );
+        eglQueryContext( mEglDisplay, mEglContext, EGL_CONTEXT_MINOR_VERSION, &contextMinor );
+        std::fprintf( stderr,
+                      "[OgreWaylandEglWindow] current EGL context version=%d.%d display=%p "
+                      "surface=%p context=%p\n",
+                      static_cast<int>( contextMajor ), static_cast<int>( contextMinor ),
+                      static_cast<void *>( mEglDisplay ), static_cast<void *>( mEglSurface ),
+                      static_cast<void *>( mEglContext ) );
 
         if( !mContext )
             mContext = OGRE_NEW WaylandEglContext( mEglSupport );

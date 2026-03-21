@@ -32,6 +32,7 @@
 #include "OgreGL3PlusRenderSystem.h"
 #include "OgreLogManager.h"
 #include "OgreStringConverter.h"
+#include <cstdio>
 
 #ifdef OGRE_GLSUPPORT_USE_GLX
 #    include "windowing/GLX/OgreGLXGLSupport.h"
@@ -224,8 +225,43 @@ namespace Ogre
 
         if( name == "Interface" )
         {
+            std::fprintf( stderr, "[GlSwitchableSupport] selecting interface: %s\n",
+                          value.c_str() );
+            LogManager::getSingleton().logMessage(String( "GlSwitchableSupport selecting interface: " ) + value );
+            if( option == mOptions.end() )
+                return;
+
             option->second.currentValue = value;
-            refreshConfig();
+
+            uint8 newInterfaceIdx = 0u;
+            bool found = false;
+            for( uint8 i = 0u; i < static_cast<uint8>( mAvailableInterfaces.size() ); ++i )
+            {
+                if( value == getInterfaceName( mAvailableInterfaces[i].type ) )
+                {
+                    newInterfaceIdx = i;
+                    found = true;
+                    break;
+                }
+            }
+
+            if( !found || newInterfaceIdx == mSelectedInterface )
+                return;
+
+            const ConfigOption interfaceOption = option->second;
+
+            if( mAvailableInterfaces[mSelectedInterface].support )
+                mAvailableInterfaces[mSelectedInterface].support->stop();
+
+            mSelectedInterface = newInterfaceIdx;
+            start();
+            ensureSupportCreated( mSelectedInterface )->addConfig();
+
+            mOptions.clear();
+            mOptions[interfaceOption.name] = interfaceOption;
+            mOptions.insert(
+                ensureSupportCreated( mSelectedInterface )->getConfigOptions().begin(),
+                ensureSupportCreated( mSelectedInterface )->getConfigOptions().end() );
         }
         else
         {
@@ -269,6 +305,13 @@ namespace Ogre
     Window *GlSwitchableSupport::newWindow( const String &name, uint32 width, uint32 height,
                                             bool fullscreen, const NameValuePairList *miscParams )
     {
+        std::fprintf( stderr, "[GlSwitchableSupport] newWindow via interface: %s name=%s\n",
+                      getInterfaceName( mAvailableInterfaces[mSelectedInterface].type ),
+                      name.c_str() );
+        LogManager::getSingleton().logMessage(
+            String( "GlSwitchableSupport newWindow via interface: " ) +
+            getInterfaceName( mAvailableInterfaces[mSelectedInterface].type ) +
+            " name=" + name );
         return ensureSupportCreated( mSelectedInterface )->newWindow( name, width, height,
                                                                       fullscreen, miscParams );
     }

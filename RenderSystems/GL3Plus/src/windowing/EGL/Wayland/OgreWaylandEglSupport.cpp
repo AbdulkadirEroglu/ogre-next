@@ -47,6 +47,51 @@ namespace Ogre
                              StringConverter::toString( static_cast<int>( eglGetError() ) ),
                          source );
         }
+
+        inline EGLContext createBestCoreContext( EGLDisplay eglDisplay, EGLConfig eglConfig,
+                                                 EGLContext shareContext )
+        {
+            EGLint contextAttrs[] = {
+                EGL_CONTEXT_MAJOR_VERSION,
+                4,
+                EGL_CONTEXT_MINOR_VERSION,
+                5,
+                EGL_CONTEXT_OPENGL_PROFILE_MASK,
+                EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
+#if OGRE_DEBUG_MODE
+                EGL_CONTEXT_FLAGS_KHR,
+                EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR,
+#endif
+                EGL_NONE
+            };
+
+            EGLContext context = EGL_NO_CONTEXT;
+            while( context == EGL_NO_CONTEXT && contextAttrs[1] >= 3 )
+            {
+                context = eglCreateContext( eglDisplay, eglConfig, shareContext, contextAttrs );
+
+                if( context != EGL_NO_CONTEXT )
+                {
+                    LogManager::getSingleton().logMessage(
+                        "Created Wayland EGL GL " +
+                        StringConverter::toString( contextAttrs[1] ) + "." +
+                        StringConverter::toString( contextAttrs[3] ) + " core context" );
+                    break;
+                }
+
+                if( contextAttrs[3] == 0 )
+                {
+                    contextAttrs[1] -= 1;
+                    contextAttrs[3] = 5;
+                }
+                else
+                {
+                    contextAttrs[3] -= 1;
+                }
+            }
+
+            return context;
+        }
     }  // namespace
 
     WaylandEglSupport::WaylandEglSupport() :
@@ -242,29 +287,7 @@ namespace Ogre
             throwEglError( "Failed to bind EGL OpenGL API.",
                            "WaylandEglSupport::createSharedContext" );
 
-        const EGLint primaryAttrs[] = { EGL_CONTEXT_MAJOR_VERSION,
-                                        4,
-                                        EGL_CONTEXT_MINOR_VERSION,
-                                        5,
-#if OGRE_DEBUG_MODE
-                                        EGL_CONTEXT_FLAGS_KHR,
-                                        EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR,
-#endif
-                                        EGL_NONE };
-        const EGLint fallbackAttrs[] = { EGL_CONTEXT_MAJOR_VERSION,
-                                         3,
-                                         EGL_CONTEXT_MINOR_VERSION,
-                                         3,
-#if OGRE_DEBUG_MODE
-                                         EGL_CONTEXT_FLAGS_KHR,
-                                         EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR,
-#endif
-                                         EGL_NONE };
-
-        mSharedContext = eglCreateContext( mEglDisplay, mEglConfig, EGL_NO_CONTEXT, primaryAttrs );
-        if( mSharedContext == EGL_NO_CONTEXT )
-            mSharedContext = eglCreateContext( mEglDisplay, mEglConfig, EGL_NO_CONTEXT,
-                                               fallbackAttrs );
+        mSharedContext = createBestCoreContext( mEglDisplay, mEglConfig, EGL_NO_CONTEXT );
 
         if( mSharedContext == EGL_NO_CONTEXT )
             throwEglError( "Failed to create shared Wayland EGL context.",
@@ -322,28 +345,7 @@ namespace Ogre
         if( shareContext == EGL_NO_CONTEXT )
             shareContext = mSharedContext;
 
-        const EGLint primaryAttrs[] = { EGL_CONTEXT_MAJOR_VERSION,
-                                        4,
-                                        EGL_CONTEXT_MINOR_VERSION,
-                                        5,
-#if OGRE_DEBUG_MODE
-                                        EGL_CONTEXT_FLAGS_KHR,
-                                        EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR,
-#endif
-                                        EGL_NONE };
-        const EGLint fallbackAttrs[] = { EGL_CONTEXT_MAJOR_VERSION,
-                                         3,
-                                         EGL_CONTEXT_MINOR_VERSION,
-                                         3,
-#if OGRE_DEBUG_MODE
-                                         EGL_CONTEXT_FLAGS_KHR,
-                                         EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR,
-#endif
-                                         EGL_NONE };
-
-        EGLContext context = eglCreateContext( mEglDisplay, mEglConfig, shareContext, primaryAttrs );
-        if( context == EGL_NO_CONTEXT )
-            context = eglCreateContext( mEglDisplay, mEglConfig, shareContext, fallbackAttrs );
+        EGLContext context = createBestCoreContext( mEglDisplay, mEglConfig, shareContext );
 
         if( context == EGL_NO_CONTEXT )
             throwEglError( "Failed to create Wayland EGL window context.",

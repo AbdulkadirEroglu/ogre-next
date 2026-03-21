@@ -3428,6 +3428,15 @@ namespace Ogre {
             mGLSupport->initialiseExtensions();
         }
 
+        const char *glVersion = reinterpret_cast<const char *>( glGetString( GL_VERSION ) );
+        const char *glRenderer = reinterpret_cast<const char *>( glGetString( GL_RENDERER ) );
+        std::fprintf( stderr,
+                      "[GL3PlusRenderSystem] gl3wInit=%d currentContext=%p glVersion=%s "
+                      "glRenderer=%s\n",
+                      gl3wRetStatus, static_cast<void *>( mCurrentContext ),
+                      glVersion ? glVersion : "(null)",
+                      glRenderer ? glRenderer : "(null)" );
+
         // Make sure that OpenGL 3.3+ is supported in this context
         if( gl3wRetStatus != GL3W_OK || !mGLSupport->hasMinGLVersion(3, 3) )
         {
