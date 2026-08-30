@@ -181,6 +181,8 @@ namespace Ogre
     const IdString PbsProperty::AmbientFixed = IdString( "ambient_fixed" );
     const IdString PbsProperty::AmbientHemisphere = IdString( "ambient_hemisphere" );
     const IdString PbsProperty::AmbientHemisphereInverted = IdString( "ambient_hemisphere_inverted" );
+    const IdString PbsProperty::AmbientHemiStandard = IdString( "ambient_hemi_standard" );
+    const IdString PbsProperty::AmbientHemiRimSquared = IdString( "ambient_hemi_rim_squared" );
     const IdString PbsProperty::AmbientSh = IdString( "ambient_sh" );
     const IdString PbsProperty::AmbientShMonochrome = IdString( "ambient_sh_monochrome" );
     const IdString PbsProperty::TargetEnvprobeMap = IdString( "target_envprobe_map" );
@@ -1713,13 +1715,20 @@ namespace Ogre
 
             if( ambientMode == AmbientFixed )
                 setProperty( kNoTid, PbsProperty::AmbientFixed, 1 );
-            if( ambientMode == AmbientHemisphereNormal || ambientMode == AmbientHemisphereInverted )
+            else if( ambientMode == AmbientHemisphereNormal || ambientMode == AmbientHemisphereInverted )
             {
                 setProperty( kNoTid, PbsProperty::AmbientHemisphere, 1 );
+                setProperty( kNoTid, PbsProperty::AmbientHemiStandard, 1 );
                 if( ambientMode == AmbientHemisphereInverted )
                     setProperty( kNoTid, PbsProperty::AmbientHemisphereInverted, 1 );
             }
-            if( ambientMode == AmbientSh || ambientMode == AmbientShMonochrome )
+            else if( ambientMode == AmbientHemisphereRim || ambientMode == AmbientHemisphereRimSquared )
+            {
+                setProperty( kNoTid, PbsProperty::AmbientHemisphere, 1 );
+                if( ambientMode == AmbientHemisphereRimSquared )
+                    setProperty( kNoTid, PbsProperty::AmbientHemiRimSquared, 1 );
+            }
+            else if( ambientMode == AmbientSh || ambientMode == AmbientShMonochrome )
             {
                 setProperty( kNoTid, PbsProperty::AmbientSh, 1 );
                 if( ambientMode == AmbientShMonochrome )
@@ -1971,14 +1980,15 @@ namespace Ogre
                 mapSize += 4u * 4u;
 
             // vec3 ambientUpperHemi + float envMapScale
-            if( ( ambientMode >= AmbientFixed && ambientMode <= AmbientHemisphereInverted ) ||
+            if( ( ambientMode >= AmbientFixed && ambientMode <= AmbientHemisphereRimSquared ) ||
                 envMapScale != 1.0f || vctNeedsAmbientHemi )
             {
                 mapSize += 4 * 4;
             }
 
             // vec3 ambientLowerHemi + padding + vec3 ambientHemisphereDir + padding
-            if( ambientMode == AmbientHemisphereNormal || ambientMode == AmbientHemisphereInverted ||
+            if( ( ambientMode >= AmbientHemisphereNormal &&
+                  ambientMode <= AmbientHemisphereRimSquared ) ||
                 vctNeedsAmbientHemi )
             {
                 mapSize += 8 * 4;
@@ -2373,7 +2383,7 @@ namespace Ogre
             }
 
             // vec3 ambientUpperHemi + padding
-            if( ( ambientMode >= AmbientFixed && ambientMode <= AmbientHemisphereInverted ) ||
+            if( ( ambientMode >= AmbientFixed && ambientMode <= AmbientHemisphereRimSquared ) ||
                 envMapScale != 1.0f || vctNeedsAmbientHemi )
             {
                 *passBufferPtr++ = static_cast<float>( upperHemisphere.r );
@@ -2383,7 +2393,8 @@ namespace Ogre
             }
 
             // vec3 ambientLowerHemi + padding + vec3 ambientHemisphereDir + padding
-            if( ambientMode == AmbientHemisphereNormal || ambientMode == AmbientHemisphereInverted ||
+            if( ( ambientMode >= AmbientHemisphereNormal &&
+                  ambientMode <= AmbientHemisphereRimSquared ) ||
                 vctNeedsAmbientHemi )
             {
                 *passBufferPtr++ = static_cast<float>( lowerHemisphere.r );

@@ -40,6 +40,7 @@ THE SOFTWARE.
 #include "OgreVulkanRootLayout.h"
 #include "OgreVulkanSupport.h"
 #include "OgreVulkanTextureGpuManager.h"
+#include "OgreVulkanTextureGpuWindow.h"
 #include "OgreVulkanUtils.h"
 #include "OgreVulkanWindow.h"
 #include "Vao/OgreVulkanVaoManager.h"
@@ -1040,11 +1041,15 @@ namespace Ogre
                 0x5040001,  // 540
 
                 0x6010000,  // 610
+                0x6010001,  // 610.1
                 0x6010200,  // 612
+                0x6010201,  // 612.1
                 0x6010501,  // 615
                 0x6010600,  // 616
                 0x6010800,  // 618
                 0x6010900,  // 619
+                0x6010901,  // 619.1
+                0x6010902,  // 619.2
                 0x6020001,  // 620
                 0x6030001,  // 630
                 0x6040001,  // 640
@@ -1738,9 +1743,9 @@ namespace Ogre
 
         if( mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::Textures] != writeDescSet )
         {
+            mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::ReadOnlyBuffers] = 0;
             mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::TexBuffers] = 0;
             mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::Textures] = writeDescSet;
-            mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::UavBuffers] = 0;
             mGlobalTable.dirtyBakedTextures = true;
             mTableDirty = true;
         }
@@ -1803,7 +1808,7 @@ namespace Ogre
             mComputeTable.bakedDescriptorSets[BakedDescriptorSets::ReadOnlyBuffers] = 0;
             mComputeTable.bakedDescriptorSets[BakedDescriptorSets::TexBuffers] = 0;
             mComputeTable.bakedDescriptorSets[BakedDescriptorSets::Textures] = &vulkanSet->mWriteDescSet;
-            mComputeTable.dirtyBakedSamplers = true;
+            mComputeTable.dirtyBakedTextures = true;
             mComputeTableDirty = true;
         }
     }
@@ -1822,7 +1827,7 @@ namespace Ogre
                 &vulkanSet->mWriteDescSets[1];
             mComputeTable.bakedDescriptorSets[BakedDescriptorSets::Textures] =
                 &vulkanSet->mWriteDescSets[2];
-            mComputeTable.dirtyBakedSamplers = true;
+            mComputeTable.dirtyBakedTextures = true;
             mComputeTableDirty = true;
         }
     }
@@ -3159,13 +3164,38 @@ namespace Ogre
                 imageBarrier.oldLayout = VulkanMappings::get( itor->oldLayout, texture );
                 imageBarrier.newLayout = VulkanMappings::get( itor->newLayout, texture );
 
+                if( texture->isRenderWindowSpecific() &&
+                    PixelFormatGpuUtils::isAccessible( texture->getPixelFormat() ) )
+                {
+                    // This is a swapchain (depth & stencil textures should not reach here).
+                    //
+                    // We must add the semaphore now. We may have to flush the queue earlier,
+                    // before even reaching VulkanRenderPassDescriptor::performLoadActions.
+                    OGRE_ASSERT_HIGH( dynamic_cast<VulkanTextureGpuWindow *>( texture ) );
+                    VulkanTextureGpuWindow *textureVulkan =
+                        static_cast<VulkanTextureGpuWindow *>( texture );
+                    VkSemaphore semaphore = textureVulkan->getImageAcquiredSemaphore();
+                    if( semaphore )
+                    {
+                        // We cannot start transition this texture commands until the semaphore says so.
+                        mDevice->mGraphicsQueue.addWindowToWaitFor( semaphore );
+                        srcStage |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+                    }
+                }
+
                 const bool bIsDepth = PixelFormatGpuUtils::isDepth( texture->getPixelFormat() );
 
                 // If oldAccess == ResourceAccess::Undefined then this texture is used for
                 // the first time on a new frame (but not necessarily the first time ever)
                 // thus there are no caches needed to flush.
                 //
-                // dstStage only needs to wait for the transition to happen though
+                // dstStage needs to wait for srcStage to finish for the transition to happen though.
+                if( itor->oldLayout != ResourceLayout::Texture &&
+                    itor->oldLayout != ResourceLayout::Uav )
+                {
+                    srcStage |= toVkPipelineStageFlags( itor->oldLayout, bIsDepth );
+                }
+
                 if( itor->oldAccess != ResourceAccess::Undefined )
                 {
                     if( itor->oldAccess & ResourceAccess::Write )
@@ -3174,12 +3204,6 @@ namespace Ogre
                             VulkanMappings::getAccessFlags( itor->oldLayout, itor->oldAccess, texture,
                                                             false ) &
                             c_srcValidAccessFlags;
-                    }
-
-                    if( itor->oldLayout != ResourceLayout::Texture &&
-                        itor->oldLayout != ResourceLayout::Uav )
-                    {
-                        srcStage |= toVkPipelineStageFlags( itor->oldLayout, bIsDepth );
                     }
 
                     if( itor->oldStageMask != 0u )
@@ -3721,6 +3745,20 @@ namespace Ogre
         OGRE_ASSERT_LOW( set->mRsData );
         VulkanDescriptorSetTexture *vulkanSet =
             static_cast<VulkanDescriptorSetTexture *>( set->mRsData );
+        if( mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::Textures] ==
+            &vulkanSet->mWriteDescSet )
+        {
+            mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::Textures] = 0;
+            mGlobalTable.dirtyBakedTextures = true;
+            mTableDirty = true;
+        }
+        if( mComputeTable.bakedDescriptorSets[BakedDescriptorSets::Textures] ==
+            &vulkanSet->mWriteDescSet )
+        {
+            mComputeTable.bakedDescriptorSets[BakedDescriptorSets::Textures] = 0;
+            mComputeTable.dirtyBakedTextures = true;
+            mComputeTableDirty = true;
+        }
         delete vulkanSet;
         set->mRsData = 0;
     }
@@ -3736,6 +3774,24 @@ namespace Ogre
         OGRE_ASSERT_LOW( set->mRsData );
         VulkanDescriptorSetTexture2 *vulkanSet =
             static_cast<VulkanDescriptorSetTexture2 *>( set->mRsData );
+        if( mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::ReadOnlyBuffers] ==
+            &vulkanSet->mWriteDescSets[0] )
+        {
+            mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::ReadOnlyBuffers] = 0;
+            mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::TexBuffers] = 0;
+            mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::Textures] = 0;
+            mGlobalTable.dirtyBakedTextures = true;
+            mTableDirty = true;
+        }
+        if( mComputeTable.bakedDescriptorSets[BakedDescriptorSets::ReadOnlyBuffers] ==
+            &vulkanSet->mWriteDescSets[0] )
+        {
+            mComputeTable.bakedDescriptorSets[BakedDescriptorSets::ReadOnlyBuffers] = 0;
+            mComputeTable.bakedDescriptorSets[BakedDescriptorSets::TexBuffers] = 0;
+            mComputeTable.bakedDescriptorSets[BakedDescriptorSets::Textures] = 0;
+            mComputeTable.dirtyBakedTextures = true;
+            mComputeTableDirty = true;
+        }
         vulkanSet->destroy( mVaoManager, mDevice->mDevice, *set );
         delete vulkanSet;
         set->mRsData = 0;
@@ -3752,6 +3808,20 @@ namespace Ogre
         OGRE_ASSERT_LOW( set->mRsData );
         VulkanDescriptorSetSampler *vulkanSet =
             static_cast<VulkanDescriptorSetSampler *>( set->mRsData );
+        if( mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::Samplers] ==
+            &vulkanSet->mWriteDescSet )
+        {
+            mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::Samplers] = &vulkanSet->mWriteDescSet;
+            mGlobalTable.dirtyBakedSamplers = true;
+            mTableDirty = true;
+        }
+        if( mComputeTable.bakedDescriptorSets[BakedDescriptorSets::Samplers] ==
+            &vulkanSet->mWriteDescSet )
+        {
+            mComputeTable.bakedDescriptorSets[BakedDescriptorSets::Samplers] = 0;
+            mComputeTable.dirtyBakedSamplers = true;
+            mComputeTableDirty = true;
+        }
         delete vulkanSet;
         set->mRsData = 0;
     }
@@ -3767,6 +3837,27 @@ namespace Ogre
         OGRE_ASSERT_LOW( set->mRsData );
 
         VulkanDescriptorSetUav *vulkanSet = reinterpret_cast<VulkanDescriptorSetUav *>( set->mRsData );
+        if( mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::UavBuffers] ==
+            &vulkanSet->mWriteDescSets[0] )
+        {
+            mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::UavBuffers] = 0;
+            mGlobalTable.bakedDescriptorSets[BakedDescriptorSets::UavTextures] = 0;
+            mGlobalTable.dirtyBakedUavs = true;
+            mTableDirty = true;
+        }
+        if( mComputeTable.bakedDescriptorSets[BakedDescriptorSets::UavBuffers] ==
+            &vulkanSet->mWriteDescSets[0] )
+        {
+            mComputeTable.bakedDescriptorSets[BakedDescriptorSets::UavBuffers] = 0;
+            mComputeTable.bakedDescriptorSets[BakedDescriptorSets::UavTextures] = 0;
+            mComputeTable.dirtyBakedUavs = true;
+            mComputeTableDirty = true;
+        }
+        if( mUavRenderingDescSet && mUavRenderingDescSet->mRsData == set->mRsData )
+        {
+            mUavRenderingDescSet = 0;
+            mUavRenderingDirty = true;
+        }
         vulkanSet->destroy( *set );
         delete vulkanSet;
 

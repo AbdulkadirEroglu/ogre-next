@@ -1022,8 +1022,8 @@ namespace Ogre
 #    if defined( _WIN32_WINNT_WINBLUE ) && _WIN32_WINNT >= _WIN32_WINNT_WINBLUE
         if( win == NULL && windowType == "SwapChainPanel" && externalHandle &&
 #        ifdef __cplusplus_winrt
-            dynamic_cast<Windows::UI::Xaml::Controls::SwapChainPanel ^>( ( Platform::Object ^ )
-                                                                             externalHandle )
+            dynamic_cast<Windows::UI::Xaml::Controls::SwapChainPanel ^>(
+                reinterpret_cast<Platform::Object ^>( externalHandle ) )
 #        else
             reinterpret_cast<winrt::Windows::Foundation::IInspectable &>( externalHandle )
                 .try_as<winrt::Windows::UI::Xaml::Controls::SwapChainPanel>()
@@ -2517,8 +2517,9 @@ namespace Ogre
                     D3D11Mappings::get( newBlock->mSourceBlendFactorAlpha, true );
                 blendDesc.RenderTarget[0].DestBlendAlpha =
                     D3D11Mappings::get( newBlock->mDestBlendFactorAlpha, true );
-                blendDesc.RenderTarget[0].BlendOp = blendDesc.RenderTarget[0].BlendOpAlpha =
-                    D3D11Mappings::get( newBlock->mBlendOperation );
+                blendDesc.RenderTarget[0].BlendOp = D3D11Mappings::get( newBlock->mBlendOperation );
+                blendDesc.RenderTarget[0].BlendOpAlpha =
+                    D3D11Mappings::get( newBlock->mBlendOperationAlpha );
 
                 blendDesc.RenderTarget[0].RenderTargetWriteMask =
                     newBlock->mBlendChannelMask & HlmsBlendblock::BlendChannelAll;
@@ -2541,9 +2542,8 @@ namespace Ogre
                     D3D11Mappings::get( newBlock->mSourceBlendFactor, true );
                 blendDesc.RenderTarget[0].DestBlendAlpha =
                     D3D11Mappings::get( newBlock->mDestBlendFactor, true );
-                blendDesc.RenderTarget[0].BlendOp = D3D11Mappings::get( newBlock->mBlendOperation );
-                blendDesc.RenderTarget[0].BlendOpAlpha =
-                    D3D11Mappings::get( newBlock->mBlendOperationAlpha );
+                blendDesc.RenderTarget[0].BlendOp = blendDesc.RenderTarget[0].BlendOpAlpha =
+                    D3D11Mappings::get( newBlock->mBlendOperation );
 
                 blendDesc.RenderTarget[0].RenderTargetWriteMask =
                     newBlock->mBlendChannelMask & HlmsBlendblock::BlendChannelAll;
