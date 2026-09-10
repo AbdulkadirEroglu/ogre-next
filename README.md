@@ -1,3 +1,131 @@
+> **This branch (`wayland-v2-3-stable`) carries an unofficial native Wayland
+> patch set for Gazebo, built against OGRE-Next 2.3.** See below for what it
+> is, upstream status, and how to build it. This section will be trimmed
+> back down (or replaced with just a pointer) once/if the work upstream
+> settles one way or another.
+
+# Native Wayland support for Gazebo (unofficial patch set)
+
+This is a working, verified-end-to-end set of patches across OGRE-Next and
+three Gazebo libraries that lets `gz sim`'s GUI render natively under
+Wayland instead of falling back to XWayland. It is **not merged upstream**
+and, per current maintainer feedback, may not be for a while — see
+"Upstream status" below. This document exists so you (or anyone else who
+wants working Wayland support today) doesn't have to wait on that.
+
+## What you get
+
+- OGRE-Next's GL3Plus render system gains a native Wayland EGL windowing
+  backend (`"Wayland EGL Window"` interface), selectable at runtime the
+  same way `"Headless EGL / PBuffer"` already is.
+- It adopts the GL context Qt already made current on the calling thread
+  (mirroring how GLX's `currentGLContext`/`externalGLControl` params work),
+  so Ogre and Qt share the same GL object namespace — this is what makes
+  camera textures actually valid when Qt wraps them for display.
+- `gz-rendering`'s `ogre2` backend passes a `wl_display`/`wl_surface` pair
+  through to it.
+- `gz-gui` obtains that Wayland display from Qt's public
+  `QNativeInterface::QWaylandApplication` API and forces a desktop GL
+  context (Qt's Wayland platform integration otherwise silently picks
+  GLES, which the GL3Plus backend can't use at all).
+- `gz-sim` gains an opt-in `GZ_GUI_WAYLAND=1` environment variable that
+  skips the existing hardcoded XWayland fallback.
+
+Verified: a real `gz sim` GUI session renders `examples/worlds/shapes.sdf`
+correctly under native Wayland (cone, ellipsoid, sphere, box, cylinder,
+capsule — correct colors/materials/lighting/shadows, screenshot-confirmed),
+with zero crashes for the full session duration.
+
+## Upstream status (as of 2026-09-10)
+
+Four PRs were opened. Short version: OGRE-Next's maintainers will only
+accept this against their `master` branch (a major version ahead, 4.0),
+but `gz-rendering` is pinned to OGRE-Next 2.3 with no plans to move in the
+short/medium term — their real long-term direction is a from-scratch
+external renderer (Bevy-based), not an OGRE-Next upgrade. So the official
+path forward runs through getting a 2.3-line backport accepted after the
+master version merges, which is being pursued separately but isn't fast.
+Full detail in the PR threads:
+- OGRE-Next: https://github.com/OGRECave/ogre-next/pull/593
+- gz-rendering: https://github.com/gazebosim/gz-rendering/pull/1325
+
+**Practical consequence for this patch set**: use this branch
+(`wayland-v2-3-stable`), not the branch targeting OGRE-Next master — the
+master-targeted version won't link against current `gz-rendering` at all,
+since it's still pinned to 2.3.
+
+## Branches to use
+
+| Repo | Fork | Branch | Notes |
+|---|---|---|---|
+| OGRE-Next | `AbdulkadirEroglu/ogre-next` | `wayland-v2-3-stable` (this branch) | Built against OGRE-Next 2.3, matches what `gz-rendering` actually expects today |
+| gz-rendering | `AbdulkadirEroglu/gz-rendering` | `wayland-integration` | |
+| gz-gui | `AbdulkadirEroglu/gz-gui` | `wayland-support` | |
+| gz-sim | `AbdulkadirEroglu/gz-sim` | `wayland-support` | |
+
+## Build order
+
+All four need to share one install prefix so they find each other via
+CMake's `find_package`. No `sudo` required anywhere.
+
+```bash
+PREFIX=/path/to/your/install-prefix
+
+# 1. OGRE-Next (this branch)
+cmake -S ogre-next -B ogre-next/build \
+  -DCMAKE_INSTALL_PREFIX=$PREFIX \
+  -DCMAKE_PREFIX_PATH=/path/to/freeimage-and-other-deps \
+  -DOGRE_BUILD_RENDERSYSTEM_GL3PLUS=ON \
+  -DOGRE_GLSUPPORT_USE_GLX=ON \
+  -DOGRE_GLSUPPORT_USE_EGL_HEADLESS=ON \
+  -DOGRE_GLSUPPORT_USE_EGL_WAYLAND=ON
+cmake --build ogre-next/build -j$(nproc)
+cmake --install ogre-next/build
+
+# 2. gz-rendering, gz-gui, gz-sim, each in the usual gz-cmake way,
+#    pointed at the same $PREFIX via CMAKE_PREFIX_PATH/CMAKE_INSTALL_PREFIX.
+#    Standard gz build order applies: gz-cmake -> gz-utils -> gz-math ->
+#    gz-common -> gz-plugin -> gz-rendering -> gz-transport/gz-msgs ->
+#    gz-gui -> sdformat -> gz-physics -> gz-sensors -> gz-sim.
+```
+
+## Running it
+
+```bash
+unset QT_QPA_PLATFORM
+GZ_GUI_WAYLAND=1 gz sim -v 4 examples/worlds/shapes.sdf
+```
+
+Without `GZ_GUI_WAYLAND=1`, behavior is unchanged (still forces XWayland).
+
+## Known limitations
+
+- No automated test coverage was added for the Wayland-specific code paths
+  — the behavior needs a live Wayland compositor, which CI environments
+  generally don't have. Verification throughout was manual: standalone
+  harnesses plus real `gz sim` runs. See each repo's PR description for
+  the exact manual reproduction steps used.
+- Only tested against one compositor/driver combination (Hyprland +
+  NVIDIA proprietary). Other compositors or Mesa drivers are untested.
+- gz-physics has no physics backend built in the environment this was
+  verified in — unrelated to Wayland, just noting that "no physics engine"
+  errors in the log are a separate, pre-existing gap, not something this
+  patch set causes.
+- This is a personal fork, not a maintained package. If you build on top
+  of it, expect to rebase periodically as the upstream repos move, and
+  don't expect API stability guarantees.
+
+## Why this exists / motivation
+
+Xorg is effectively in maintenance-only mode across the Linux desktop
+ecosystem, and Wayland is where things are headed. Gazebo is a useful
+bellwether here — it's already several major versions ahead of what ROS
+currently pins (ROS is still on an older Gazebo release). The goal of this
+patch set is to make native Wayland support available now, both to use
+directly and to give the upstream conversation something concrete to react
+to, rather than waiting for that gap to close on its own timeline.
+
+---
 
 # OGRE3D (Object-Oriented Graphics Rendering Engine)
 
